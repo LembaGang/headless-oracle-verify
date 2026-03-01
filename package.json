@@ -1,8 +1,14 @@
 {
   "name": "@headlessoracle/verify",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Verify cryptographically signed market-state receipts from Headless Oracle",
-  "keywords": ["headless-oracle", "market-status", "ed25519", "verification", "ai-agents"],
+  "keywords": [
+    "headless-oracle",
+    "market-status",
+    "ed25519",
+    "verification",
+    "ai-agents"
+  ],
   "homepage": "https://headlessoracle.com",
   "repository": {
     "type": "git",
@@ -25,7 +31,10 @@
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsup",
     "test": "vitest run",

@@ -27,13 +27,13 @@ export interface VerifyOptions {
   /**
    * Ed25519 public key as a 64-character hex string.
    * When provided, skips the key registry network fetch.
-   * Obtain from: https://api.headlessoracle.com/.well-known/oracle-keys.json
+   * Obtain from: https://headlessoracle.com/.well-known/oracle-keys.json
    */
   publicKey?: string;
 
   /**
    * Key registry URL to fetch the public key from.
-   * Default: https://api.headlessoracle.com/.well-known/oracle-keys.json
+   * Default: https://headlessoracle.com/.well-known/oracle-keys.json
    */
   keysUrl?: string;
 
@@ -47,7 +47,7 @@ export interface VerifyOptions {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const DEFAULT_KEYS_URL =
-  'https://api.headlessoracle.com/.well-known/oracle-keys.json';
+  'https://headlessoracle.com/.well-known/oracle-keys.json';
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -60,7 +60,7 @@ const DEFAULT_KEYS_URL =
  *   3. Ed25519 signature matches the canonical payload
  *
  * @example
- * const receipt = await fetch('https://api.headlessoracle.com/v5/demo?mic=XNYS').then(r => r.json());
+ * const receipt = await fetch('https://headlessoracle.com/v5/demo?mic=XNYS').then(r => r.json());
  * const { valid, reason } = await verify(receipt);
  * if (!valid || receipt.status !== 'OPEN') halt();
  */
