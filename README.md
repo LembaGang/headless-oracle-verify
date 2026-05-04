@@ -54,7 +54,8 @@ await verify(receipt, { publicKey: '03dc2799...', now: new Date('2026-03-01') })
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `publicKey` | `string` | — | Ed25519 public key (64-char hex). Skips key registry fetch. |
-| `keysUrl` | `string` | `https://api.headlessoracle.com/.well-known/oracle-keys.json` | Key registry URL. |
+| `canonicalFields` | `string[]` | — | Skip `/v5/keys` fetch entirely by passing the canonical signed-payload field allowlist directly. Tests and offline-only environments only. |
+| `keysUrl` | `string` | `https://headlessoracle.com/v5/keys` | Endpoint to fetch keys + `canonical_payload_spec` from. Custom URLs MUST return both. |
 | `now` | `Date` | `new Date()` | Current time override. Useful in tests. |
 
 **Failure reasons:**
@@ -65,8 +66,9 @@ await verify(receipt, { publicKey: '03dc2799...', now: new Date('2026-03-01') })
 | `EXPIRED` | `expires_at` has passed. Fetch a fresh receipt before acting. |
 | `UNKNOWN_KEY` | `public_key_id` not in the key registry. Key may have rotated. |
 | `INVALID_SIGNATURE` | Ed25519 signature does not match. Receipt may have been tampered with. |
-| `KEY_FETCH_FAILED` | Network error fetching the key registry. |
+| `KEY_FETCH_FAILED` | Network error fetching the key registry / canonical spec. |
 | `INVALID_KEY_FORMAT` | Public key or signature is not valid hex. |
+| `SPEC_UNAVAILABLE` | `/v5/keys` returned no `canonical_payload_spec`. The verifier refuses to guess. |
 
 ## Receipt TTL
 
@@ -90,13 +92,19 @@ After successful verification, check `receipt.status`:
 For high-throughput use, fetch the public key once and pass it on every call:
 
 ```javascript
-// At startup — fetch once
-const { keys } = await fetch('https://api.headlessoracle.com/.well-known/oracle-keys.json')
+// At startup — fetch once. /v5/keys carries both the public keys and the
+// canonical_payload_spec the SDK needs to reconstruct the signed message.
+const { keys, canonical_payload_spec } = await fetch('https://headlessoracle.com/v5/keys')
   .then(r => r.json());
 const publicKey = keys[0].public_key;
+const canonicalFields = Array.from(new Set([
+  ...(canonical_payload_spec.receipt_fields  ?? []),
+  ...(canonical_payload_spec.override_fields ?? []),
+  ...(canonical_payload_spec.health_fields   ?? []),
+]));
 
 // On every receipt — no network call
-const { valid } = await verify(receipt, { publicKey });
+const { valid } = await verify(receipt, { publicKey, canonicalFields });
 ```
 
 ## Authenticated receipts
@@ -128,7 +136,7 @@ for (const receipt of receipts) {
 
 ## Verification spec
 
-Receipts are signed with **Ed25519**. The canonical payload is all receipt fields except `signature`, keys sorted alphabetically, `JSON.stringify`'d with no whitespace, UTF-8 encoded. The field list for each receipt type is published at [/v5/keys → canonical_payload_spec](https://api.headlessoracle.com/v5/keys).
+Receipts are signed with **Ed25519**. The canonical payload is the receipt filtered to the field allowlist published at [/v5/keys → canonical_payload_spec](https://headlessoracle.com/v5/keys), keys sorted alphabetically, `JSON.stringify`'d with no whitespace, UTF-8 encoded. The worker decorates `/v5/demo` and `/v5/status` responses with non-signed metadata (`receipt`, `discovery_url`, `extensions.bazaar`); the SDK filters these out before reconstructing the message bytes.
 
 ## Runtime requirements
 

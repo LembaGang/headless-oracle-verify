@@ -1,6 +1,6 @@
 {
   "name": "@headlessoracle/verify",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Verify cryptographically signed market-state receipts from Headless Oracle",
   "keywords": [
     "headless-oracle",

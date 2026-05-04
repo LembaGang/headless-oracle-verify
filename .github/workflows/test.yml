@@ -1,0 +1,32 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Daily at 09:00 UTC — catches drift between SDK and live worker.
+    - cron: '0 9 * * *'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20.x', '22.x']
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Unit + integration tests
+        run: npm test
+        env:
+          # Lets the integration suite know it's allowed to hit live production.
+          # Set SDK_OFFLINE=1 in fork CI to skip the live-network tests.
+          SDK_OFFLINE: ''
