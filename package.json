@@ -1,18 +1,23 @@
 {
   "name": "@headlessoracle/verify",
-  "version": "1.0.2",
-  "description": "Verify cryptographically signed market-state receipts from Headless Oracle",
+  "version": "1.1.0",
+  "description": "Fail-closed pre-trade guard + Ed25519 verifier for signed market-state attestations from Headless Oracle. Drop-in safeToExecute() against the free /v1/status endpoint.",
   "keywords": [
     "headless-oracle",
     "market-status",
+    "halt-gate",
+    "pre-trade-gate",
+    "fail-closed",
     "ed25519",
     "verification",
-    "ai-agents"
+    "ai-agents",
+    "autonomous-agents",
+    "environment-state"
   ],
   "homepage": "https://headlessoracle.com",
   "repository": {
     "type": "git",
-    "url": "https://github.com/LembaGang/headless-oracle-verify.git"
+    "url": "git+https://github.com/LembaGang/headless-oracle-verify.git"
   },
   "license": "MIT",
   "type": "module",

@@ -212,6 +212,209 @@ export async function verify(
   }
 }
 
+// ── safeToExecute — the drop-in guard ─────────────────────────────────────────
+
+/** Machine-readable reason an action was refused. Fail-closed taxonomy. */
+export type SafeToExecuteReason =
+  | 'NETWORK_ERROR'      // fetch to /v1/status threw or hit network failure
+  | 'BAD_RESPONSE'       // non-2xx status or unparseable JSON body
+  | 'MISSING_FIELDS'     // receipt missing one of signature / public_key_id / issued_at / expires_at
+  | 'STALE_RECEIPT'      // (now - issued_at) > max_attestation_age — caller's policy bound
+  | 'EXPIRED'            // receipt.expires_at has passed — HO's stated TTL
+  | 'INVALID_SIGNATURE'  // Ed25519 signature does not match the canonical payload
+  | 'UNKNOWN_KEY'        // public_key_id not in /v5/keys registry
+  | 'KEY_FETCH_FAILED'   // /v5/keys request failed
+  | 'INVALID_KEY_FORMAT' // public key or signature is not valid hex
+  | 'SPEC_UNAVAILABLE'   // /v5/keys returned no canonical_payload_spec
+  | 'WRONG_MIC'          // receipt.mic does not match the MIC we asked for
+  | 'NOT_OPEN';          // receipt.status is CLOSED / HALTED / UNKNOWN — fail-closed
+
+/**
+ * Decision returned by safeToExecute. The receipt is included whenever one
+ * was successfully retrieved (even on failure) so callers can log the exact
+ * artifact their decision was based on. That artifact IS the audit trail.
+ */
+export interface SafeToExecuteResult {
+  /** True only when the receipt is fresh, valid, correctly signed, for the
+   *  requested MIC, and reports status OPEN. Anything else is false. */
+  safe: boolean;
+  /** Machine-readable reason the action was refused, when `safe` is false. */
+  reason?: SafeToExecuteReason;
+  /** receipt.status as reported by HO — OPEN / CLOSED / HALTED / UNKNOWN.
+   *  Absent only when no receipt was retrieved (NETWORK_ERROR / BAD_RESPONSE). */
+  status?: string;
+  /** The receipt as returned by /v1/status, with discovery_url + nested
+   *  receipt envelope intact. Log this for audit. Absent when no receipt
+   *  was retrieved. */
+  receipt?: Record<string, unknown>;
+}
+
+export interface SafeToExecuteOptions {
+  /**
+   * REQUIRED. Maximum age, in seconds, between the receipt's `issued_at`
+   * and the caller's `now`. Receipts older than this are refused without
+   * even verifying the signature.
+   *
+   * No default is intentional. The IETF environment.* family rule is that
+   * the relying party must declare its own freshness policy — implicit
+   * defaults shift the TOCTTOU risk onto the SDK and hide it from review.
+   * Pick a value tight enough that your action cannot meaningfully race
+   * a venue state change.
+   */
+  max_attestation_age: number;
+
+  /**
+   * Base URL of the free signed-status endpoint. The MIC will be appended.
+   * Default: https://headlessoracle.com/v1/status
+   */
+  endpoint?: string;
+
+  // The following mirror verify(): same semantics.
+  publicKey?: string;
+  canonicalFields?: string[];
+  keysUrl?: string;
+  now?: Date;
+}
+
+const DEFAULT_STATUS_ENDPOINT = 'https://headlessoracle.com/v1/status';
+
+/**
+ * Fail-closed guard for an autonomous agent loop. Fetch the current signed
+ * receipt for `mic` from Headless Oracle, verify freshness against
+ * `opts.max_attestation_age`, verify the Ed25519 signature against HO's
+ * published public key, verify the receipt is for the MIC the caller asked
+ * for, and verify the venue is OPEN. Returns `{ safe: true, receipt, status }`
+ * iff every check passes. Otherwise returns `{ safe: false, reason, receipt? }`.
+ *
+ * The receipt is included on failure whenever one was retrieved — that artifact
+ * IS your audit trail. Log it whichever way the decision goes.
+ *
+ * Trust model: this function trusts HO's signing key (fetched from /v5/keys or
+ * passed via opts.publicKey) and nothing else. A response claiming a different
+ * public_key_id is rejected as UNKNOWN_KEY unless that key is in the registry.
+ *
+ * Throws (not returns) only one error: `max_attestation_age` missing or
+ * non-positive. That is a caller bug, not a runtime decision — it should fail
+ * loud, not be folded into the fail-closed reason taxonomy.
+ *
+ * @example
+ *   const { safe, reason, receipt } = await safeToExecute('XNYS', {
+ *     max_attestation_age: 30, // seconds — your freshness policy
+ *   });
+ *   logEvent({ kind: 'pretrade-gate', safe, reason, receipt });
+ *   if (!safe) return; // do nothing — fail-closed
+ *   await placeOrder(...);
+ */
+export async function safeToExecute(
+  mic: string,
+  opts: SafeToExecuteOptions,
+): Promise<SafeToExecuteResult> {
+  // ── 0. Caller-bug guard — throw, do NOT fold into reason taxonomy ──────────
+  if (
+    !opts
+    || typeof opts.max_attestation_age !== 'number'
+    || !Number.isFinite(opts.max_attestation_age)
+    || opts.max_attestation_age <= 0
+  ) {
+    throw new Error(
+      'safeToExecute: opts.max_attestation_age (seconds, positive number) is required. ' +
+      'No default — the IETF environment.* family requires the relying party to declare its own freshness policy.',
+    );
+  }
+
+  const endpoint = opts.endpoint ?? DEFAULT_STATUS_ENDPOINT;
+  const micUpper = mic.toUpperCase();
+  const statusUrl = `${endpoint.replace(/\/+$/, '')}/${micUpper}`;
+  const now = opts.now ?? new Date();
+
+  // ── 1. Fetch the receipt ──────────────────────────────────────────────────
+  let res: Response;
+  try {
+    res = await fetch(statusUrl);
+  } catch {
+    return { safe: false, reason: 'NETWORK_ERROR' };
+  }
+
+  let receipt: Record<string, unknown>;
+  try {
+    receipt = await res.json() as Record<string, unknown>;
+  } catch {
+    return { safe: false, reason: 'BAD_RESPONSE' };
+  }
+
+  if (!res.ok) {
+    // Pass the parsed body back so the caller can log what the server said.
+    return { safe: false, reason: 'BAD_RESPONSE', receipt };
+  }
+
+  // ── 2. Required fields (also gates the issued_at parse below) ─────────────
+  if (
+    typeof receipt.signature     !== 'string' ||
+    typeof receipt.public_key_id !== 'string' ||
+    typeof receipt.issued_at     !== 'string' ||
+    typeof receipt.expires_at    !== 'string'
+  ) {
+    return { safe: false, reason: 'MISSING_FIELDS', receipt };
+  }
+
+  // ── 3. Caller-policy freshness check — runs BEFORE signature verification.
+  //    A stale receipt is refused without burning verification work. The
+  //    relying party's policy is the binding constraint here, not HO's TTL.
+  const issuedAt = new Date(receipt.issued_at);
+  if (isNaN(issuedAt.getTime())) {
+    return { safe: false, reason: 'MISSING_FIELDS', receipt };
+  }
+  const ageMs = now.getTime() - issuedAt.getTime();
+  if (ageMs > opts.max_attestation_age * 1000) {
+    return {
+      safe:    false,
+      reason:  'STALE_RECEIPT',
+      status:  typeof receipt.status === 'string' ? receipt.status : undefined,
+      receipt,
+    };
+  }
+
+  // ── 4. Cryptographic + TTL verification via verify() ──────────────────────
+  const v = await verify(receipt, {
+    publicKey:        opts.publicKey,
+    canonicalFields:  opts.canonicalFields,
+    keysUrl:          opts.keysUrl,
+    now,
+  });
+  if (!v.valid) {
+    return {
+      safe:    false,
+      reason:  v.reason as SafeToExecuteReason,
+      status:  typeof receipt.status === 'string' ? receipt.status : undefined,
+      receipt,
+    };
+  }
+
+  // ── 5. Receipt must be for the MIC we asked for. Defends against the case
+  //    where the URL was rewritten but the body wasn't (proxy / CDN misroute).
+  if (typeof receipt.mic !== 'string' || receipt.mic.toUpperCase() !== micUpper) {
+    return {
+      safe:    false,
+      reason:  'WRONG_MIC',
+      status:  typeof receipt.status === 'string' ? receipt.status : undefined,
+      receipt,
+    };
+  }
+
+  // ── 6. Status must be OPEN. CLOSED, HALTED, UNKNOWN — all fail-closed.
+  //    The receipt is still returned so the caller can log the actual state.
+  if (receipt.status !== 'OPEN') {
+    return {
+      safe:    false,
+      reason:  'NOT_OPEN',
+      status:  typeof receipt.status === 'string' ? receipt.status : undefined,
+      receipt,
+    };
+  }
+
+  return { safe: true, status: 'OPEN', receipt };
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function fetchKeys(url: string): Promise<KeysResponse> {

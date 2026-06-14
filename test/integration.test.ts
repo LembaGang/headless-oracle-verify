@@ -34,9 +34,14 @@ describeIfOnline('integration — live /v5/demo round-trip', () => {
     // Sanity: the worker decorates the response with non-signed metadata.
     // If any of these go away, the bug being regressed against has changed
     // shape and the test is no longer measuring what it claims to measure.
+    //
+    // NOTE — 2026-06-14: extensions.bazaar was deliberately removed from
+    // /v5/demo and /v5/status trial 200 bodies (CDP Bazaar now indexes from
+    // the dedicated /v5/status/x402 402 resource, not from trial 200s). The
+    // `extensions` field is no longer present on this response and is no
+    // longer asserted here. `receipt` + `discovery_url` remain.
     expect(receipt).toHaveProperty('receipt');
     expect(receipt).toHaveProperty('discovery_url');
-    expect(receipt).toHaveProperty('extensions');
 
     const result = await verify(receipt);
     expect(result.valid).toBe(true);

@@ -4,6 +4,42 @@ All notable changes to `@headlessoracle/verify` are documented here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-06-14
+
+### Added
+- **`safeToExecute(mic, opts)`** — the fail-closed drop-in guard. Fetches a
+  signed receipt from the free `/v1/status/{MIC}` endpoint, enforces the
+  relying party's `max_attestation_age` policy, verifies the Ed25519
+  signature against HO's published public key, confirms the MIC matches
+  the one requested, and confirms `status === 'OPEN'`. Returns
+  `{ safe, reason?, status?, receipt? }`. The receipt is included on every
+  failure branch where one was retrieved — that artifact IS the audit trail.
+- `SafeToExecuteReason` enum (12 members) and `SafeToExecuteResult`
+  / `SafeToExecuteOptions` interfaces as named exports.
+- 24 new tests covering every fail-closed branch, the one happy path,
+  the audit-receipt invariant, URL handling (default + custom + lowercase +
+  trailing slash), and the `max_attestation_age` throw semantics.
+
+### Changed
+- `opts.max_attestation_age` is **required** and has no default. Missing,
+  zero, negative, NaN, or Infinity values throw rather than fold into the
+  fail-closed `reason` taxonomy — a missing freshness policy is a caller
+  bug, not a runtime decision. Aligns with the IETF
+  [`environment.*` constraint family](https://datatracker.ietf.org/doc/draft-borthwick-msebenzi-environment-state/)
+  rule that the relying party declares its own freshness policy.
+- README restructured to lead with `safeToExecute()`. `verify()` is
+  documented as the lower-level primitive below it, unchanged in behaviour.
+  Quickstart endpoint changed from `/v5/demo` to `/v1/status` — the new
+  free signed-status door (unauthenticated, signed, `receipt_mode: 'live'`,
+  byte-equivalent to paid `/v5/status` for the same MIC at the same instant).
+
+### Calibrated claims
+- README adopts the same observed-session-state framing as
+  `https://headlessoracle.com/halt-gate`: the receipt is a signed
+  attestation of HO's observation, not ground truth; freshness is enforced
+  at action-time by the relying party; per-symbol halts do not flip
+  per-venue status; the trust root is HO's signing key, nothing else.
+
 ## [1.0.2] — 2026-05-04
 
 ### Fixed
